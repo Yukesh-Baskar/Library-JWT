@@ -17,6 +17,7 @@ import (
 )
 
 var userCollection *mongo.Collection = database.OpenCollection("users")
+var bookCollection *mongo.Collection = database.OpenCollection("books")
 var validate = validator.New()
 
 func SignUp(c *gin.Context) {
@@ -143,14 +144,34 @@ func Login(c *gin.Context) {
 
 func AddBook(c *gin.Context) {
 	token := c.GetString("token")
-	fmt.Println(token)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
 	claims, err := helpers.ValidateToken(token, false)
 
 	if err != nil {
 		c.JSON(err.Status, err)
 		return
 	}
-	fmt.Println("claims", claims)
+
+	if claims.User_Type != "ADMIN" {
+		c.JSON(http.StatusInternalServerError, helpers.Errors{Message: "User cannot access this resource!", Status: http.StatusInternalServerError}.HandleError())
+		return
+	}
+
+	var book *models.Book
+
+	if err := c.BindJSON(&book); err != nil {
+		c.JSON(http.StatusInternalServerError, err)
+		return
+	}
+	book.ID = primitive.NewObjectID()
+	book.Book_ID = book.ID.Hex()
+	insertedID, iErr := bookCollection.InsertOne(ctx, book)
+	if iErr != nil {
+		c.JSON(http.StatusInternalServerError, helpers.Errors{Message: iErr.Error(), Status: http.StatusInternalServerError})
+		return
+	}
+	c.JSON(http.StatusOK, insertedID)
 }
 
 func RefreshToken(c *gin.Context) {

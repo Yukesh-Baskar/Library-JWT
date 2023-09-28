@@ -8,4 +8,5 @@ type Book struct {
 	Author   string             `json:"author"`
 	Category string             `json:"category"`
 	Price    int                `json:"price"`
+	Book_ID  string             `json:"book_id"`
 }

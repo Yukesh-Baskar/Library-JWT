@@ -43,7 +43,7 @@ func GenerateToken(email, firstName, lastName, uid, userType string, flag int) (
 		User_Type: userType,
 		StandardClaims: jwt.StandardClaims{
 			Issuer:    "Library",
-			ExpiresAt: time.Now().Local().Add(time.Minute * 2).Unix(),
+			ExpiresAt: time.Now().Local().Add(time.Hour * time.Duration(24)).Unix(),
 		},
 	}
 
@@ -89,10 +89,6 @@ func ValidateToken(signedToken string, isRefresh bool) (*JWTSignedDetails, *Erro
 			}
 		}
 		// Refresh can be only done within 2 minutes
-		fmt.Println("")
-		fmt.Println("s", isRefresh, claims.ExpiresAt)
-		fmt.Println("")
-
 		if claims.ExpiresAt < (time.Now().Local().Unix() - 60) {
 			return nil, &Errors{
 				Message: "Refresh exceeds 2 minutes!",
@@ -108,8 +104,5 @@ func ValidateToken(signedToken string, isRefresh bool) (*JWTSignedDetails, *Erro
 		}
 
 	}
-
-	fmt.Printf("%+v", claims)
-
 	return claims, nil
 }
