@@ -14,6 +14,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 var userCollection *mongo.Collection = database.OpenCollection("users")
@@ -143,6 +144,7 @@ func Login(c *gin.Context) {
 }
 
 func AddBook(c *gin.Context) {
+	fmt.Println("wesgews")
 	token := c.GetString("token")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
@@ -164,14 +166,39 @@ func AddBook(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, err)
 		return
 	}
-	book.ID = primitive.NewObjectID()
-	book.Book_ID = book.ID.Hex()
-	insertedID, iErr := bookCollection.InsertOne(ctx, book)
-	if iErr != nil {
-		c.JSON(http.StatusInternalServerError, helpers.Errors{Message: iErr.Error(), Status: http.StatusInternalServerError})
+
+	filter := bson.D{{Key: "category", Value: book.Category}}
+	count, cerr := bookCollection.CountDocuments(ctx, filter)
+
+	if cerr != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+			"error": err.Message,
+		})
 		return
 	}
-	c.JSON(http.StatusOK, insertedID)
+	var id any
+	if count > 0 {
+		update := bson.M{"$inc": bson.M{"total_count": 1}}
+		options := options.Update().SetUpsert(true)
+		ressss, cerr := bookCollection.UpdateOne(ctx, filter, update, options)
+		if cerr != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+				"error": err.Message,
+			})
+			return
+		}
+		fmt.Println("r", ressss)
+		c.JSON(http.StatusAccepted, ressss)
+	} else {
+		book.ID = primitive.NewObjectID()
+		book.Book_ID = book.ID.Hex()
+		id, cerr = bookCollection.InsertOne(ctx, book)
+		if cerr != nil {
+			c.JSON(http.StatusInternalServerError, helpers.Errors{Message: cerr.Error(), Status: http.StatusInternalServerError})
+			return
+		}
+	}
+	c.JSON(http.StatusOK, id)
 }
 
 func RefreshToken(c *gin.Context) {
@@ -203,4 +230,100 @@ func RefreshToken(c *gin.Context) {
 		"accessToken": tokens[0],
 	})
 
+}
+
+func BuyBook(c *gin.Context) {
+	token := c.GetString("token")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	claims, err := helpers.ValidateToken(token, false)
+	if err != nil {
+		c.JSON(err.Status, err)
+		return
+	}
+
+	var book models.Book
+	if bErr := c.Bind(&book); bErr != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, bErr)
+		return
+	}
+
+	matchStage := bson.D{
+		{Key: "$match", Value: bson.D{
+			{Key: "category", Value: book.Category},
+			{Key: "total_count", Value: bson.D{{Key: "$gt", Value: 0}}},
+		}},
+	}
+
+	cur, cerr := bookCollection.Aggregate(ctx, mongo.Pipeline{matchStage})
+	if cerr != nil {
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	var res []bson.M
+	if err := cur.All(ctx, &res); err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, err)
+		return
+	}
+
+	if len(res) == 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			"message": "No books available in this category",
+		})
+		return
+	}
+
+	// Define the filter for the book update
+	bookFilter := bson.D{
+		{Key: "category", Value: book.Category},
+		{Key: "total_count", Value: bson.D{{Key: "$gt", Value: 0}}},
+	}
+
+	// Define the update for the book
+	bookUpdate := bson.M{"$inc": bson.M{"total_count": -1}}
+
+	updateRes, cerr := bookCollection.UpdateOne(ctx, bookFilter, bookUpdate)
+
+	if cerr != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			"error": cerr.Error(),
+		})
+		return
+	}
+
+	if updateRes.ModifiedCount == 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			"error": "No matching document found or document not updated.",
+		})
+		return
+	}
+
+	userFilter := bson.D{{Key: "user_id", Value: claims.Uid}}
+	userUpdate := bson.D{
+		{Key: "$push", Value: bson.D{
+			{Key: "books", Value: bson.D{{Key: "$each", Value: res}}},
+		}},
+	}
+
+	updateRes, cerr = userCollection.UpdateOne(ctx, userFilter, userUpdate)
+
+	if cerr != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			"error": cerr.Error(),
+		})
+		return
+	}
+
+	if updateRes.ModifiedCount == 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			"error": "No matching document found or document not updated.",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Book bought successfully.",
+	})
 }

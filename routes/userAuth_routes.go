@@ -9,5 +9,6 @@ import (
 func HandleUserRoutes(incomingRoute *gin.Engine) {
 	incomingRoute.Use(middlewares.AuthUser)
 	incomingRoute.PATCH("/user/add-book", controllers.AddBook)
+	incomingRoute.POST("/user/buy-book", controllers.BuyBook)
 	incomingRoute.GET("/user/refresh-token", controllers.RefreshToken)
 }
